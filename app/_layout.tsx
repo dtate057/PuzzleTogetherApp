@@ -1,9 +1,8 @@
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { Slot } from 'expo-router';
+import { router, Slot } from 'expo-router';
 import { useEffect } from 'react';
 import { Alert, SafeAreaView } from 'react-native';
-
 // 🔔 Configure foreground notifications
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -16,9 +15,22 @@ Notifications.setNotificationHandler({
 });
 
 
+
 export default function Layout() {
   useEffect(() => {
     registerForPushNotificationsAsync();
+
+    // 🔔 Listen for notification taps
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+const screen = response.notification.request.content.data?.screen;
+
+if (screen === 'home' || screen === 'feed') {
+  console.log('Navigating to:', screen);
+  router.push(`/${screen}` as const);
+}
+    });
+
+    return () => subscription.remove();
   }, []);
 
   async function registerForPushNotificationsAsync() {
