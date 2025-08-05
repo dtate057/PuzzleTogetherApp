@@ -3,7 +3,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { arrayUnion, collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Alert, Button, FlatList, Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Button, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { auth, db } from '../../firebase';
 
 dayjs.extend(relativeTime);
@@ -19,9 +19,13 @@ export default function ProfileScreen() {
     const { user: userId } = useLocalSearchParams();
     const router = useRouter();
     const [userProfiles, setUserProfiles] = useState({});
-const [isFollowing, setIsFollowing] = useState(false);
-const [followerCount, setFollowerCount] = useState(0);
-const [followingCount, setFollowingCount] = useState(0);
+    const [isFollowing, setIsFollowing] = useState(false);
+    const [followerCount, setFollowerCount] = useState(0);
+    const [followingCount, setFollowingCount] = useState(0);
+    const [showFollowModal, setShowFollowModal] = useState(false);
+    const [followList, setFollowList] = useState([]); // List of user objects
+    const [followListTitle, setFollowListTitle] = useState(''); // "Followers" or "Following"
+const [userGroups, setUserGroups] = useState([]);
 
 
     const styles = StyleSheet.create({
@@ -178,38 +182,60 @@ const [followingCount, setFollowingCount] = useState(0);
             Alert.alert('Could not react to comment');
         }
     };
-const handleFollowToggle = async () => {
-  const currentUserId = auth.currentUser.uid;
-  const profileUserId = user;
+    const handleFollowToggle = async () => {
+        const currentUserId = auth.currentUser.uid;
+        const profileUserId = user;
 
-  const currentUserRef = doc(db, 'users', currentUserId);
-  const profileUserRef = doc(db, 'users', profileUserId);
+        const currentUserRef = doc(db, 'users', currentUserId);
+        const profileUserRef = doc(db, 'users', profileUserId);
 
-  try {
-    if (isFollowing) {
-      // 🔽 Unfollow
-      await updateDoc(currentUserRef, {
-        following: arrayRemove(profileUserId)
-      });
-      await updateDoc(profileUserRef, {
-        followers: arrayRemove(currentUserId)
-      });
-    } else {
-      // 🔼 Follow
-      await updateDoc(currentUserRef, {
-        following: arrayUnion(profileUserId)
-      });
-      await updateDoc(profileUserRef, {
-        followers: arrayUnion(currentUserId)
-      });
-    }
+        try {
+            if (isFollowing) {
+                // 🔽 Unfollow
+                await updateDoc(currentUserRef, {
+                    following: arrayRemove(profileUserId)
+                });
+                await updateDoc(profileUserRef, {
+                    followers: arrayRemove(currentUserId)
+                });
+            } else {
+                // 🔼 Follow
+                await updateDoc(currentUserRef, {
+                    following: arrayUnion(profileUserId)
+                });
+                await updateDoc(profileUserRef, {
+                    followers: arrayUnion(currentUserId)
+                });
+            }
 
-    setIsFollowing((prev) => !prev); // Toggle local state
-  } catch (error) {
-    console.error('Failed to update follow status:', error);
-    Alert.alert('Error', 'Failed to update follow status');
-  }
-};
+            setIsFollowing((prev) => !prev); // Toggle local state
+        } catch (error) {
+            console.error('Failed to update follow status:', error);
+            Alert.alert('Error', 'Failed to update follow status');
+        }
+    };
+    const fetchUserList = async (ids) => {
+        const users = [];
+
+        for (const uid of ids) {
+            try {
+                console.log('Fetching user with UID:', uid); // ✅ debug
+                const snap = await getDoc(doc(db, 'users', uid));
+                if (snap.exists()) {
+                    const data = snap.data();
+                    console.log('✅ Found user:', data.email); // confirm email
+                    users.push({ id: uid, ...data });
+                } else {
+                    console.warn('❌ No user found for UID:', uid);
+                }
+            } catch (e) {
+                console.error('🔥 Error fetching user for UID:', uid, e);
+            }
+        }
+
+        return users;
+    };
+
 
 
     useEffect(() => {
@@ -222,23 +248,23 @@ const handleFollowToggle = async () => {
 
                 // Fetch user profile from Firestore (based on UID)
                 const userSnap = await getDoc(doc(db, 'users', user));
-if (userSnap.exists()) {
-  const userData = userSnap.data();
-  const userRef = doc(db, 'users', user);
+                if (userSnap.exists()) {
+                    const userData = userSnap.data();
+                    const userRef = doc(db, 'users', user);
 
-  const updates = {};
-  if (!Array.isArray(userData.following)) updates.following = [];
-  if (!Array.isArray(userData.followers)) updates.followers = [];
+                    const updates = {};
+                    if (!Array.isArray(userData.following)) updates.following = [];
+                    if (!Array.isArray(userData.followers)) updates.followers = [];
 
-  if (Object.keys(updates).length > 0) {
-    await updateDoc(userRef, updates);
-  }
+                    if (Object.keys(updates).length > 0) {
+                        await updateDoc(userRef, updates);
+                    }
 
-  setProfile({ ...userData, ...updates });
-    setFollowerCount((userData.followers || []).length);
-  setFollowingCount((userData.following || []).length);
-}
- else {
+                    setProfile({ ...userData, ...updates });
+                    setFollowerCount((userData.followers || []).length);
+                    setFollowingCount((userData.following || []).length);
+                }
+                else {
                     console.warn("No user profile found for UID:", user);
                     setProfile(null);
                 }
@@ -247,9 +273,16 @@ if (userSnap.exists()) {
                 console.error("Error fetching user data:", err);
             }
         };
-
+        const fetchUserGroups = async () => {
+            const q = query(collection(db, 'groups'), where('members', 'array-contains', auth.currentUser.uid));
+            const snapshot = await getDocs(q);
+            const groups = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setUserGroups(groups);
+        };
         if (user) {
             fetchUserData();
+            fetchUserGroups();
+
         }
     }, [user]); // 🔁 Rerun when the `user` (UID) in the route changes
     useEffect(() => {
@@ -267,20 +300,20 @@ if (userSnap.exists()) {
             fetchUserProfile(uid); // 👈 this should already exist in your component
         });
     }, [posts]);
-useEffect(() => {
-  const checkIfFollowing = async () => {
-    if (!auth.currentUser?.uid || !user) return;
-    try {
-      const currentUserSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
-      const following = currentUserSnap.data()?.following || [];
-      setIsFollowing(following.includes(user));
-    } catch (err) {
-      console.error('Error checking follow status:', err);
-    }
-  };
+    useEffect(() => {
+        const checkIfFollowing = async () => {
+            if (!auth.currentUser?.uid || !user) return;
+            try {
+                const currentUserSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+                const following = currentUserSnap.data()?.following || [];
+                setIsFollowing(following.includes(user));
+            } catch (err) {
+                console.error('Error checking follow status:', err);
+            }
+        };
 
-  checkIfFollowing();
-}, [user]);
+        checkIfFollowing();
+    }, [user]);
     const fetchUserProfile = async (uid) => {
         if (userProfiles[uid]) return; // already fetched
         try {
@@ -312,24 +345,46 @@ useEffect(() => {
                     <Text style={{ fontStyle: 'italic', color: '#666', marginTop: 4 }}>
                         {profile.bio || 'No bio yet'}
                     </Text>
-<View style={{ flexDirection: 'row', marginTop: 8 }}>
-  <Text style={{ marginRight: 16 }}>{followerCount} Followers</Text>
-  <Text>{followingCount} Following</Text>
-</View>
+                    <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                        <Text
+                            style={{ marginRight: 16, textDecorationLine: 'underline', color: 'blue' }}
+                            onPress={async () => {
+                                const users = await fetchUserList(profile.followers || []);
+                                setFollowList(users);
+                                setFollowListTitle('Followers');
+                                setShowFollowModal(true);
+                            }}
+                        >
+                            {followerCount} Followers
+                        </Text>
+                        <Text
+                            style={{ textDecorationLine: 'underline', color: 'blue' }}
+                            onPress={async () => {
+                                console.log('Fetching following:', profile.following); // ✅ DEBUG
+                                const users = await fetchUserList(profile.following || []);
+                                setFollowList(users);
+                                setFollowListTitle('Following');
+                                setShowFollowModal(true);
+                            }}
+                        >
+                            {followingCount} Following
+                        </Text>
+                    </View>
+
 
                     {/* ✅ Show edit button only on own profile */}
                     {auth.currentUser?.uid === userId && (
                         <Button title="Edit Profile" onPress={() => router.push('/profile/edit')} />
                     )}
                     {auth.currentUser?.uid !== user && (
-  <Button
-    title={isFollowing ? 'Unfollow' : 'Follow'}
-    onPress={handleFollowToggle}
-  />
-)}
+                        <Button
+                            title={isFollowing ? 'Unfollow' : 'Follow'}
+                            onPress={handleFollowToggle}
+                        />
+                    )}
 
                 </View>
-                
+
             )}
 
 
@@ -471,10 +526,86 @@ useEffect(() => {
                                 onPress={() => handleAddComment(item.id)}
                             />
                         </View>
+<View style={{ marginTop: 24 }}>
+  <Text style={{ fontWeight: 'bold', fontSize: 16 }}>Joined Groups:</Text>
+  {userGroups.length === 0 ? (
+    <Text style={{ color: '#888' }}>You're not in any groups yet.</Text>
+  ) : (
+    userGroups.map((group) => (
+      <View key={group.id} style={{ paddingVertical: 4 }}>
+        <Text style={{ fontSize: 15 }}>{group.name}</Text>
+      </View>
+    ))
+  )}
+</View>
+
+
+
+
                     </View>
                 )}
             />
+            {showFollowModal && (
+                <View
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        right: 0,
+                        backgroundColor: 'rgba(0,0,0,0.4)',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 1000,
+                    }}
+                >
+                    <View
+                        style={{
+                            backgroundColor: '#fff',
+                            padding: 20,
+                            borderRadius: 10,
+                            width: '80%',
+                            maxHeight: '70%',
+                        }}
+                    >
+                        <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 10 }}>{followListTitle}</Text>
 
+                        <ScrollView style={{ maxHeight: 200 }}>
+                            {followList.length === 0 && (
+                                <Text style={{ textAlign: 'center', color: '#888' }}>No users to show.</Text>
+                            )}
+
+                            {followList.map((u, index) => (
+                                <Pressable
+                                    key={index}
+                                    onPress={() => {
+                                        setShowFollowModal(false); // hide modal
+                                        router.push(`/profile/${u.id}`); // navigate to profile
+                                    }}
+                                    style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        marginBottom: 10,
+                                        padding: 6,
+                                        borderRadius: 6,
+                                        backgroundColor: '#f5f5f5',
+                                    }}
+                                >
+                                    <Image
+                                        source={{ uri: u.avatarUrl || 'https://www.gravatar.com/avatar/?d=mp' }}
+                                        style={{ width: 32, height: 32, borderRadius: 16, marginRight: 10 }}
+                                    />
+                                    <Text>{u.email || 'Unknown User'}</Text>
+                                </Pressable>
+
+                            ))}
+                        </ScrollView>
+
+                        <Button title="CLOSE" onPress={() => setShowFollowModal(false)} />
+                    </View>
+                </View>
+            )}
         </ScrollView>
+
     );
 }
